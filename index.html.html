@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Smart Dustbin – Ipoh Full Screen</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+  body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
+  
+  #map { height: 100vh; width: 100vw; z-index: 1; }
+
+  .menu-toggle {
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    z-index: 1100;
+    background: #2e7d32;
+    color: white;
+    border: none;
+    padding: 12px 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+  }
+
+  #sideMenu {
+    position: fixed;
+    top: 0;
+    left: -350px; 
+    width: 320px;
+    height: 100%;
+    background: #f4f6f7;
+    z-index: 1200;
+    transition: 0.4s;
+    overflow-y: auto;
+    box-shadow: 5px 0 15px rgba(0,0,0,0.2);
+  }
+
+  #sideMenu.open { left: 0; }
+
+  #overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.4);
+    display: none;
+    z-index: 1150;
+  }
+
+  header { background: #2e7d32; color: white; padding: 20px; text-align: center; }
+  .close-btn { float: right; cursor: pointer; font-size: 24px; color: white; border:none; background:none; }
+  
+  .section {
+    background: white;
+    margin: 15px;
+    padding: 15px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  }
+
+  .progress-container { background: #eee; border-radius: 10px; height: 12px; width: 100%; margin: 10px 0; overflow: hidden; }
+  #fillBar { height: 100%; width: 0%; background: #4caf50; transition: 0.5s; }
+
+  button { padding: 10px; margin: 5px 0; width: 100%; border-radius: 6px; border: none; font-weight: bold; color: white; cursor: pointer; }
+  .green { background: #4caf50; } .red { background: #f44336; } .blue { background: #2196f3; } .orange { background: #ff9800; } .gray { background: #607d8b; } .dark { background: #333; }
+
+  #points { font-size: 20px; font-weight: bold; color: #2e7d32; }
+  input[type="text"] { width: 90%; padding: 10px; margin-bottom: 5px; border-radius: 5px; border: 1px solid #ccc; }
+</style>
+</head>
+
+<body>
+
+<button class="menu-toggle" onclick="toggleMenu()">☰</button>
+
+<div id="overlay" onclick="toggleMenu()"></div>
+
+<div id="sideMenu">
+  <header>
+    <button class="close-btn" onclick="toggleMenu()">×</button>
+    <h3>Smart Dustbin App</h3>
+    <p>Ipoh, Malaysia</p>
+  </header>
+
+  <div class="section">
+    <h3>♻ Waste Segregation</h3>
+    <button class="green" onclick="disposeWaste()">Dispose Waste (+10 pts)</button>
+    <p>Points: <span id="points">0</span></p>
+  </div>
+
+  <div class="section">
+    <h3>📊 Status & Collection</h3>
+    <div class="progress-container"><div id="fillBar"></div></div>
+    <p id="status">Fill Level: 20%</p>
+    <button class="blue" onclick="checkFill()">Refresh Sensors</button>
+    <button class="dark" onclick="collectTrash()">Empty Bin (Collector)</button>
+  </div>
+
+  <div class="section">
+    <h3>🚨 Report Area</h3>
+    <input type="text" id="polluted" placeholder="Area name">
+    <button class="orange" onclick="reportPollution()">Report Pollution</button>
+    <p id="nearest" style="color:red; font-size:13px;"></p>
+  </div>
+
+  <div class="section">
+    <h3>⭐ Penalty</h3>
+    <button class="red" onclick="litter()">Litter (Penalty -5)</button>
+  </div>
+
+  <div class="section">
+    <h3>🎥 Learning</h3>
+    <button class="gray" onclick="showVideo()">Watch Tutorial</button>
+    <div id="video"></div>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+let points = parseInt(localStorage.getItem('ecoPoints')) || 0;
+let fillLevel = 20;
+
+var map = L.map('map', { zoomControl: false }).setView([4.5975, 101.0901], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+var bins = [
+  {name:"Old Town - Concubine Lane", lat:4.5968, lng:101.0788},
+  {name:"Ipoh Parade Mall", lat:4.5978, lng:101.0910},
+  {name:"Polo Ground Park", lat:4.5962, lng:101.1112},
+  {name:"Ipoh Railway Station", lat:4.5972, lng:101.0738},
+  {name:"Greentown Business Centre", lat:4.5985, lng:101.0950},
+  {name:"Perak Stadium", lat:4.6102, lng:101.1032},
+  {name:"Aeon Kinta City", lat:4.6170, lng:101.1190},
+  {name:"Ipoh Garden South", lat:4.6120, lng:101.1140},
+  {name:"Birch Memorial Clock Tower", lat:4.5977, lng:101.0769},
+  {name:"Gunung Lang Park", lat:4.6280, lng:101.0915},
+  {name:"Little India", lat:4.5955, lng:101.0755},
+  {name:"Pasar Besar Ipoh", lat:4.5940, lng:101.0860},
+  {name:"Hospital Ar-Ridzuan", lat:4.5950, lng:101.0850},
+  {name:"Ipoh Night Market", lat:4.6025, lng:101.1115},
+  {name:"Medan Kidd Bus Station", lat:4.5925, lng:101.0730},
+  {name:"Bin A", lat:4.600, lng:101.090},
+  {name:"Bin B", lat:4.590, lng:101.100},
+  {name:"Bin C", lat:4.610, lng:101.080}
+];
+
+bins.forEach(b => L.marker([b.lat, b.lng]).addTo(map).bindPopup("<b>Smart Bin:</b> " + b.name));
+
+function toggleMenu() {
+  const menu = document.getElementById("sideMenu");
+  const overlay = document.getElementById("overlay");
+  const isOpen = menu.classList.contains("open");
+  
+  if (isOpen) {
+    menu.classList.remove("open");
+    overlay.style.display = "none";
+  } else {
+    menu.classList.add("open");
+    overlay.style.display = "block";
+  }
+}
+
+setInterval(() => {
+  if (fillLevel < 100) {
+    fillLevel += Math.floor(Math.random() * 3);
+    updateUI();
+  }
+}, 5000);
+
+function disposeWaste() {
+  points += 10;
+  fillLevel = Math.min(fillLevel + 12, 100);
+  updateUI();
+}
+
+function litter() {
+  points = Math.max(0, points - 5);
+  alert("⚠ Penalty!");
+  updateUI();
+}
+
+function checkFill() {
+  updateUI();
+  alert("Live sensor check: " + fillLevel + "% full");
+}
+
+function collectTrash() {
+  if (fillLevel < 50) return alert("Not full enough.");
+  alert("🚛 Collection Successful!");
+  fillLevel = 0;
+  updateUI();
+}
+
+function reportPollution() {
+  let area = document.getElementById("polluted").value;
+  document.getElementById("nearest").innerHTML = "Reported " + area;
+}
+
+function showVideo() {
+  document.getElementById("video").innerHTML = `<iframe width="100%" height="150" src="https://www.youtube.com/embed/2fC4h1l4WfM" frameborder="0" allowfullscreen></iframe>`;
+}
+
+function updateUI() {
+  document.getElementById("points").innerHTML = points;
+  document.getElementById("status").innerHTML = "Fill Level: " + fillLevel + "%";
+  let bar = document.getElementById("fillBar");
+  bar.style.width = fillLevel + "%";
+  
+  if (fillLevel > 80) bar.style.backgroundColor = "#f44336";
+  else if (fillLevel > 50) bar.style.backgroundColor = "#ff9800";
+  else bar.style.backgroundColor = "#4caf50";
+
+  localStorage.setItem('ecoPoints', points);
+}
+
+updateUI();
+</script>
+</body>
+</html>
